@@ -443,6 +443,7 @@ def configure(dir=None, format_strs=None, comm=None, log_suffix=""):
     """
     If comm is provided, average all numerical stats across that comm
     """
+
     if dir is None:
         dir = os.getenv("OPENAI_LOGDIR")
     if dir is None:
@@ -470,6 +471,9 @@ def configure(dir=None, format_strs=None, comm=None, log_suffix=""):
     if output_formats:
         log("Logging to %s" % dir)
 
+def save_parameters(args, dir, prefix="training"):
+    with open(os.path.join(dir, '{}_args.txt'.format(prefix), 'w')) as f:
+        json.dump(args.__dict__, f, indent=2)
 
 def _configure_default_logger():
     configure()
