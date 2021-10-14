@@ -16,18 +16,24 @@ from guided_diffusion.script_util import (
     add_dict_to_argparser,
 )
 from guided_diffusion.train_util import TrainLoop
-
+import datetime
 
 def main():
     args = create_argparser().parse_args()
 
     dist_util.setup_dist()
-    logger.configure()
+    if dist.get_rank() == 0:
+        full_log_dir = logger.configure(dir=args.log_dir)
+        tb = SummaryWriter(log_dir=os.path.join(full_log_dir, 'runs', datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")))
 
-    logger.log("creating model...")
+        logger.log("creating model and diffusion...")
+    else:
+        tb=None
     model, diffusion = sr_create_model_and_diffusion(
         **args_to_dict(args, sr_model_and_diffusion_defaults().keys())
     )
+    if args.resume_checkpoint is not None:
+        dist_util.load_state_dict(args.model_path, map_location="cpu
     model.to(dist_util.dev())
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
 
@@ -35,13 +41,23 @@ def main():
     data = load_superres_data(
         args.data_dir,
         args.batch_size,
-        large_size=args.large_size,
-        small_size=args.small_size,
+        test_samples=args.test_samples,
+        patch_size=args.patch_size,
         class_cond=args.class_cond,
     )
-
-    logger.log("training...")
+    test_kwargs = load_data_for_testing(
+            args.data_dir,
+            args.tb_test_im_num,
+            test_samples=args.test_samples,
+            patch_size=args.patch_size,
+            class_cond=args.class_cond)
+    
+    if dist.get_rank() == 0:
+        logger.save_parameters(args=args, dir=full_log_dir)
+        logger.log("training...")
+    
     TrainLoop(
+        tb=tb,
         model=model,
         diffusion=diffusion,
         data=data,
@@ -57,20 +73,20 @@ def main():
         schedule_sampler=schedule_sampler,
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
+        total_steps=args.total_steps,
+        test_kwargs=test_kwargs,
     ).run_loop()
 
+    if dist.get_rank() == 0:
+        tb.close()
 
-def load_superres_data(data_dir, batch_size, large_size, small_size, class_cond=False):
-    data = load_data(
-        data_dir=data_dir,
-        batch_size=batch_size,
-        image_size=large_size,
-        class_cond=class_cond,
-    )
-    for large_batch, model_kwargs in data:
-        model_kwargs["low_res"] = F.interpolate(large_batch, small_size, mode="area")
-        yield large_batch, model_kwargs
-
+def load_data_for_testing(
+        ):
+    data = next(load_superres_data(
+            ))
+    batch, model_kwargs = data
+    model_kwargs["high_res"] = batch
+    return model_kwargs
 
 def create_argparser():
     defaults = dict(
@@ -84,7 +100,7 @@ def create_argparser():
         ema_rate="0.9999",
         log_interval=10,
         save_interval=10000,
-        resume_checkpoint="",
+        resume_checkpoint=None,
         use_fp16=False,
         fp16_scale_growth=1e-3,
     )
