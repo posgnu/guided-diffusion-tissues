@@ -23,6 +23,7 @@ class TrainLoop:
     def __init__(
         self,
         *,
+        tb,
         model,
         diffusion,
         data,
@@ -33,12 +34,15 @@ class TrainLoop:
         log_interval,
         save_interval,
         resume_checkpoint,
+        valid_kwargs,
         use_fp16=False,
         fp16_scale_growth=1e-3,
         schedule_sampler=None,
         weight_decay=0.0,
         lr_anneal_steps=0,
+        total_steps=1000000,
     ):
+        self.tb = tb
         self.model = model
         self.diffusion = diffusion
         self.data = data
@@ -58,6 +62,8 @@ class TrainLoop:
         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
+        self.total_steps = total_steps,
+        self.valid_kwargs = valid_kwargs,
 
         self.step = 0
         self.resume_step = 0
@@ -154,6 +160,7 @@ class TrainLoop:
         while (
             not self.lr_anneal_steps
             or self.step + self.resume_step < self.lr_anneal_steps
+            and self.step < self.total_steps
         ):
             batch, cond = next(self.data)
             self.run_step(batch, cond)
@@ -161,6 +168,8 @@ class TrainLoop:
                 logger.dumpkvs()
             if self.step % self.save_interval == 0:
                 self.save()
+                
+                self.test()
                 # Run for a finite amount of time in integration tests.
                 if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
                     return
@@ -212,6 +221,26 @@ class TrainLoop:
                 self.diffusion, t, {k: v * weights for k, v in losses.items()}
             )
             self.mp_trainer.backward(loss)
+
+
+    def test(self):
+        kwargs = self.valid_kwargs
+        kwargs = {k: v.to(dist_util.dev()) for k,v in kwargs.items()}
+        
+        high_res = kwargs["high_res"]
+        low_res = kwargs["low_res"]
+        
+        sample_hight, sample_width = high_res.shape[2:]
+        sample = self.diffusion.p_sample_loop(
+                self.model,
+                (len(kwargs), 3, sample_hight, sample_width),
+                model_kwargs=kwargs)
+
+        tensorboard = th.cat((low_res, high_res, sample), 2)
+
+        tensorboard = ((tensorboard + 1) * 127.5).clamp(0, 255).to(th.uint8)
+        self.tb.add_images('test', tensorboard, self.step)
+
 
     def _update_ema(self):
         for rate, params in zip(self.ema_rate, self.ema_params):
@@ -299,3 +328,4 @@ def log_loss_dict(diffusion, ts, losses):
         for sub_t, sub_loss in zip(ts.cpu().numpy(), values.detach().cpu().numpy()):
             quartile = int(4 * sub_t / diffusion.num_timesteps)
             logger.logkv_mean(f"{key}_q{quartile}", sub_loss)
+            self.tb.add_scalar(f"train/{key}_q{quartile}", sub_loss, self.step) 
