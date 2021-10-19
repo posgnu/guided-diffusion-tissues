@@ -5,9 +5,12 @@ Train a super-resolution model.
 import argparse
 
 import torch.nn.functional as F
+import torch.distributed as dist
+from torch.utils.tensorboard import SummaryWriter
 
+import os
 from guided_diffusion import dist_util, logger
-from guided_diffusion.image_datasets import load_data
+from guided_diffusion.image_datasets import load_superres_data, _list_image_files_train_valid_test
 from guided_diffusion.resample import create_named_schedule_sampler
 from guided_diffusion.script_util import (
     sr_model_and_diffusion_defaults,
@@ -33,24 +36,29 @@ def main():
         **args_to_dict(args, sr_model_and_diffusion_defaults().keys())
     )
     if args.resume_checkpoint is not None:
-        dist_util.load_state_dict(args.model_path, map_location="cpu
+        dist_util.load_state_dict(args.model_path, map_location="cpu")
     model.to(dist_util.dev())
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
 
     logger.log("creating data loader...")
-    data = load_superres_data(
+    
+    train_paths, valid_paths, test_paths = _list_image_files_train_valid_test(
         args.data_dir,
-        args.batch_size,
-        test_samples=args.test_samples,
-        patch_size=args.patch_size,
-        class_cond=args.class_cond,
+        args.valid_samples,
+        args.test_samples)
+    print(train_paths)
+    print(valid_paths)
+
+    train_data = load_superres_data(
+        paths = train_paths,
+        batch_size = args.batch_size,
+        patch_size = args.patch_size,
     )
-    test_kwargs = load_data_for_testing(
-            args.data_dir,
-            args.tb_test_im_num,
-            test_samples=args.test_samples,
-            patch_size=args.patch_size,
-            class_cond=args.class_cond)
+    print('Done')
+    valid_kwargs = load_data_for_validation(
+            valid_paths,
+            args.tb_valid_im_num,
+            args.patch_size)
     
     if dist.get_rank() == 0:
         logger.save_parameters(args=args, dir=full_log_dir)
@@ -60,7 +68,7 @@ def main():
         tb=tb,
         model=model,
         diffusion=diffusion,
-        data=data,
+        data=train_data,
         batch_size=args.batch_size,
         microbatch=args.microbatch,
         lr=args.lr,
@@ -74,15 +82,21 @@ def main():
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
         total_steps=args.total_steps,
-        test_kwargs=test_kwargs,
+        valid_kwargs=valid_kwargs,
     ).run_loop()
 
     if dist.get_rank() == 0:
         tb.close()
 
-def load_data_for_testing(
+def load_data_for_validation(
+    valid_paths,
+    tb_valid_im_num,
+    patch_size,
         ):
     data = next(load_superres_data(
+        paths = valid_paths,
+        batch_size = tb_valid_im_num,
+        patch_size = patch_size
             ))
     batch, model_kwargs = data
     model_kwargs["high_res"] = batch
@@ -91,7 +105,9 @@ def load_data_for_testing(
 def create_argparser():
     defaults = dict(
         data_dir="",
+        log_dir="",
         schedule_sampler="uniform",
+        patch_size=128,
         lr=1e-4,
         weight_decay=0.0,
         lr_anneal_steps=0,
@@ -103,6 +119,10 @@ def create_argparser():
         resume_checkpoint=None,
         use_fp16=False,
         fp16_scale_growth=1e-3,
+        tb_valid_im_num=10,
+        total_steps=1050e3,
+        valid_samples=['Slide002-2.tif', 'Slide003-2.tif', 'Slide005-1.tif', 'Slide008-1.tif', 'Slide008-2.tif', 'Slide010-1.tif', 'Slide011-1.tif', 'Slide011-5.tif', 'Slide011-6.tif', 'Slide019-3.tif', 'Slide022-1.tif', 'Slide022-3.tif', 'Slide023-3.tif', 'Slide025-1.tif', 'Slide028-1.tif', 'Slide029-3.tif', 'Slide030-1.tif', 'Slide032-3.tif', 'Slide036-1.tif', 'Slide036-2.tif', 'Slide037-2.tif', 'Slide039-1.tif', 'Slide042-1.tif', 'Slide044-3.tif', 'Slide046-3.tif', 'Slide047-2.tif', 'Slide053-1.tif'],
+        test_samples=['Slide008-3.tif', 'Slide011-4.tif', 'Slide013-2.tif', 'Slide014-2.tif', 'Slide019-1.tif', 'Slide019-2.tif', 'Slide022-4.tif', 'Slide031-1.tif', 'Slide034-3.tif', 'Slide035-1.tif', 'Slide044-2.tif', 'Slide045-1.tif', 'Slide045-2.tif', 'Slide045-3.tif', 'Slide052-2.tif'], 
     )
     defaults.update(sr_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
