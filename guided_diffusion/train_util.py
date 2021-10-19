@@ -223,7 +223,7 @@ class TrainLoop:
 
             loss = (losses["loss"] * weights).mean()
             log_loss_dict(
-                self.diffusion, t, {k: v * weights for k, v in losses.items()}, self.step
+                self.diffusion, t, {k: v * weights for k, v in losses.items()}, self.tb, self.step
             )
             self.mp_trainer.backward(loss)
 
@@ -326,11 +326,11 @@ def find_ema_checkpoint(main_checkpoint, step, rate):
     return None
 
 
-def log_loss_dict(diffusion, ts, losses, step):
+def log_loss_dict(diffusion, ts, losses, tensorboard, step):
     for key, values in losses.items():
         logger.logkv_mean(key, values.mean().item())
         # Log the quantiles (four quartiles, in particular).
         for sub_t, sub_loss in zip(ts.cpu().numpy(), values.detach().cpu().numpy()):
             quartile = int(4 * sub_t / diffusion.num_timesteps)
             logger.logkv_mean(f"{key}_q{quartile}", sub_loss)
-            self.tb.add_scalar(f"train/{key}_q{quartile}", sub_loss, step) 
+            tensorboard.add_scalar(f"train/{key}_q{quartile}", sub_loss, step) 
