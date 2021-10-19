@@ -470,9 +470,10 @@ def configure(dir=None, format_strs=None, comm=None, log_suffix=""):
     Logger.CURRENT = Logger(dir=dir, output_formats=output_formats, comm=comm)
     if output_formats:
         log("Logging to %s" % dir)
+    return dir
 
 def save_parameters(args, dir, prefix="training"):
-    with open(os.path.join(dir, '{}_args.txt'.format(prefix), 'w')) as f:
+    with open(os.path.join(dir, '{}_args.txt'.format(prefix)), 'w') as f:
         json.dump(args.__dict__, f, indent=2)
 
 def _configure_default_logger():
