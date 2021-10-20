@@ -4,6 +4,9 @@ This is the codebase for the project on improving the resolution of tissue image
 
 We aim to try various CNN models, including recently reliazed guided diffusion models. We heavily rely on the codebase for [Diffusion Models Beat GANS on Image Synthesis](http://arxiv.org/abs/2105.05233) [openai/guided-diffusion](https://github.com/openai/guided-diffusion).
 
+# MPI
+For running with `mpi`, you need to install it. I did `conda install -c conda-forge mpi4py`. 
+
 # Data exploration
 
 Check *notebooks*. 
