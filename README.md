@@ -1,176 +1,66 @@
-# guided-diffusion
+# guided-diffusion-tissues
 
-This is the codebase for [Diffusion Models Beat GANS on Image Synthesis](http://arxiv.org/abs/2105.05233).
+This is the codebase for the project on improving the resolution of tissue images. 
 
-This repository is based on [openai/improved-diffusion](https://github.com/openai/improved-diffusion), with modifications for classifier conditioning and architecture improvements.
+We aim to try various CNN models, including recently reliazed guided diffusion models. We heavily rely on the codebase for [Diffusion Models Beat GANS on Image Synthesis](http://arxiv.org/abs/2105.05233) [openai/guided-diffusion](https://github.com/openai/guided-diffusion).
 
-# Download pre-trained models
+# Data exploration
 
-We have released checkpoints for the main models in the paper. Before using these models, please review the corresponding [model card](model-card.md) to understand the intended use and limitations of these models.
+Check *notebooks*. 
+We decided to divide the dataset to the following groups: 70% training, 20% validation, 10% testing.
+Validation dataset will be used to visualize intermediate results, testing will be held out until the very end.
 
-Here are the download links for each model checkpoint:
-
- * 64x64 classifier: [64x64_classifier.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/64x64_classifier.pt)
- * 64x64 diffusion: [64x64_diffusion.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/64x64_diffusion.pt)
- * 128x128 classifier: [128x128_classifier.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/128x128_classifier.pt)
- * 128x128 diffusion: [128x128_diffusion.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/128x128_diffusion.pt)
- * 256x256 classifier: [256x256_classifier.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/256x256_classifier.pt)
- * 256x256 diffusion: [256x256_diffusion.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/256x256_diffusion.pt)
- * 256x256 diffusion (not class conditional): [256x256_diffusion_uncond.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/256x256_diffusion_uncond.pt)
- * 512x512 classifier: [512x512_classifier.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/512x512_classifier.pt)
- * 512x512 diffusion: [512x512_diffusion.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/512x512_diffusion.pt)
- * 64x64 -&gt; 256x256 upsampler: [64_256_upsampler.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/64_256_upsampler.pt)
- * 128x128 -&gt; 512x512 upsampler: [128_512_upsampler.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/128_512_upsampler.pt)
- * LSUN bedroom: [lsun_bedroom.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/lsun_bedroom.pt)
- * LSUN cat: [lsun_cat.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/lsun_cat.pt)
- * LSUN horse: [lsun_horse.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/lsun_horse.pt)
- * LSUN horse (no dropout): [lsun_horse_nodropout.pt](https://openaipublic.blob.core.windows.net/diffusion/jul-2021/lsun_horse_nodropout.pt)
-
-# Sampling from pre-trained models
-
-To sample from these models, you can use the `classifier_sample.py`, `image_sample.py`, and `super_res_sample.py` scripts.
-Here, we provide flags for sampling from all of these models.
-We assume that you have downloaded the relevant model checkpoints into a folder called `models/`.
-
-For these examples, we will generate 100 samples with batch size 4. Feel free to change these values.
-
+Validation samples:
 ```
-SAMPLE_FLAGS="--batch_size 4 --num_samples 100 --timestep_respacing 250"
+'Slide002-2.tif', 'Slide003-2.tif', 'Slide005-1.tif', 'Slide008-1.tif', 'Slide008-2.tif', 'Slide010-1.tif', 'Slide011-1.tif', 'Slide011-5.tif', 'Slide011-6.tif', 'Slide019-3.tif', 'Slide022-1.tif', 'Slide022-3.tif', 'Slide023-3.tif', 'Slide025-1.tif', 'Slide028-1.tif', 'Slide029-3.tif', 'Slide030-1.tif', 'Slide032-3.tif', 'Slide036-1.tif', 'Slide036-2.tif', 'Slide037-2.tif', 'Slide039-1.tif', 'Slide042-1.tif', 'Slide044-3.tif', 'Slide046-3.tif', 'Slide047-2.tif', 'Slide053-1.tif'
 ```
 
-## Classifier guidance
-
-Note for these sampling runs that you can set `--classifier_scale 0` to sample from the base diffusion model.
-You may also use the `image_sample.py` script instead of `classifier_sample.py` in that case.
-
- * 64x64 model:
-
+Testing samples:
 ```
-MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond True --diffusion_steps 1000 --dropout 0.1 --image_size 64 --learn_sigma True --noise_schedule cosine --num_channels 192 --num_head_channels 64 --num_res_blocks 3 --resblock_updown True --use_new_attention_order True --use_fp16 True --use_scale_shift_norm True"
-python classifier_sample.py $MODEL_FLAGS --classifier_scale 1.0 --classifier_path models/64x64_classifier.pt --model_path models/64x64_diffusion.pt $SAMPLE_FLAGS
+'Slide008-3.tif', 'Slide011-4.tif', 'Slide013-2.tif', 'Slide014-2.tif', 'Slide019-1.tif', 'Slide019-2.tif', 'Slide022-4.tif', 'Slide031-1.tif', 'Slide034-3.tif', 'Slide035-1.tif', 'Slide044-2.tif', 'Slide045-1.tif', 'Slide045-2.tif', 'Slide045-3.tif', 'Slide052-2.tif'
 ```
 
- * 128x128 model:
+The IDs are already included as agruments in `scripts/super_res_training.py` 
 
-```
-MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond True --diffusion_steps 1000 --image_size 128 --learn_sigma True --noise_schedule linear --num_channels 256 --num_heads 4 --num_res_blocks 2 --resblock_updown True --use_fp16 True --use_scale_shift_norm True"
-python classifier_sample.py $MODEL_FLAGS --classifier_scale 0.5 --classifier_path models/128x128_classifier.pt --model_path models/128x128_diffusion.pt $SAMPLE_FLAGS
-```
+# Training guided-diffusion model
 
- * 256x256 model:
+You need to specify number of GPUs `-n`, location for storing models and all logger files `--logdir`. Other parameters were taken from the paper mentioned above.
+For trying a model, I suggest to change the following arguments:
+`--log_interval 1`
+`--save_interval 1`
+`--tb_valid_im_num 1`
 
-```
-MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond True --diffusion_steps 1000 --image_size 256 --learn_sigma True --noise_schedule linear --num_channels 256 --num_head_channels 64 --num_res_blocks 2 --resblock_updown True --use_fp16 True --use_scale_shift_norm True"
-python classifier_sample.py $MODEL_FLAGS --classifier_scale 1.0 --classifier_path models/256x256_classifier.pt --model_path models/256x256_diffusion.pt $SAMPLE_FLAGS
-```
+After each `--save_interval`, the validation set is visualized to tensorboard. `--tb_valid_im_num` defines number of validation patches displayed in tensorboard. I wanted to add also assessment of the validation losses, but for some reason I have a CUDA error (will deal with this later).
 
- * 256x256 model (unconditional):
-
-```
-MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond False --diffusion_steps 1000 --image_size 256 --learn_sigma True --noise_schedule linear --num_channels 256 --num_head_channels 64 --num_res_blocks 2 --resblock_updown True --use_fp16 True --use_scale_shift_norm True"
-python classifier_sample.py $MODEL_FLAGS --classifier_scale 10.0 --classifier_path models/256x256_classifier.pt --model_path models/256x256_diffusion.pt $SAMPLE_FLAGS
-```
-
- * 512x512 model:
-
-```
-MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond True --diffusion_steps 1000 --image_size 512 --learn_sigma True --noise_schedule linear --num_channels 256 --num_head_channels 64 --num_res_blocks 2 --resblock_updown True --use_fp16 False --use_scale_shift_norm True"
-python classifier_sample.py $MODEL_FLAGS --classifier_scale 4.0 --classifier_path models/512x512_classifier.pt --model_path models/512x512_diffusion.pt $SAMPLE_FLAGS
-```
-
-## Upsampling
-
-For these runs, we assume you have some base samples in a file `64_samples.npz` or `128_samples.npz` for the two respective models.
-
- * 64 -&gt; 256:
-
-```
-MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond True --diffusion_steps 1000 --large_size 256  --small_size 64 --learn_sigma True --noise_schedule linear --num_channels 192 --num_heads 4 --num_res_blocks 2 --resblock_updown True --use_fp16 True --use_scale_shift_norm True"
-python super_res_sample.py $MODEL_FLAGS --model_path models/64_256_upsampler.pt --base_samples 64_samples.npz $SAMPLE_FLAGS
+```sh 
+mpiexec -n 2 python3 scripts/super_res_train.py \
+--patch_size 128 \
+--data_dir /baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/high_res \
+--log_dir .. \
+--diffusion_steps 1000 \
+--noise_schedule "linear" \
+--num_channels 192 \
+--num_res_blocks 2 \
+--num_head_channels 64 \
+--attention_resolutions "32,16,8" \
+--lr 1e-4 \
+--log_interval 10000 --save_interval 10000 \
+--batch_size 8 --tb_valid_im_num 8
 ```
 
- * 128 -&gt; 512:
+> Things to consider:
+>
+> Batch size is small because CUDA runs out of memory. Needs to be trained on larger nodes.
+>
+> Patch size is also small, however, if making it larger, the batch size should be even smaller.
+>
+> For now loss is just MSE. Maybe later we can add variational lower bound to the loss function.
 
-```
-MODEL_FLAGS="--attention_resolutions 32,16 --class_cond True --diffusion_steps 1000 --large_size 512 --small_size 128 --learn_sigma True --noise_schedule linear --num_channels 192 --num_head_channels 64 --num_res_blocks 2 --resblock_updown True --use_fp16 True --use_scale_shift_norm True"
-python super_res_sample.py $MODEL_FLAGS --model_path models/128_512_upsampler.pt $SAMPLE_FLAGS --base_samples 128_samples.npz
-```
-
-## LSUN models
-
-These models are class-unconditional and correspond to a single LSUN class. Here, we show how to sample from `lsun_bedroom.pt`, but the other two LSUN checkpoints should work as well:
-
-```
-MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond False --diffusion_steps 1000 --dropout 0.1 --image_size 256 --learn_sigma True --noise_schedule linear --num_channels 256 --num_head_channels 64 --num_res_blocks 2 --resblock_updown True --use_fp16 True --use_scale_shift_norm True"
-python image_sample.py $MODEL_FLAGS --model_path models/lsun_bedroom.pt $SAMPLE_FLAGS
-```
-
-You can sample from `lsun_horse_nodropout.pt` by changing the dropout flag:
-
-```
-MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond False --diffusion_steps 1000 --dropout 0.0 --image_size 256 --learn_sigma True --noise_schedule linear --num_channels 256 --num_head_channels 64 --num_res_blocks 2 --resblock_updown True --use_fp16 True --use_scale_shift_norm True"
-python image_sample.py $MODEL_FLAGS --model_path models/lsun_horse_nodropout.pt $SAMPLE_FLAGS
-```
-
-Note that for these models, the best samples result from using 1000 timesteps:
-
-```
-SAMPLE_FLAGS="--batch_size 4 --num_samples 100 --timestep_respacing 1000"
-```
-
-# Results
-
-This table summarizes our ImageNet results for pure guided diffusion models:
-
-| Dataset          | FID  | Precision | Recall |
-|------------------|------|-----------|--------|
-| ImageNet 64x64   | 2.07 | 0.74      | 0.63   |
-| ImageNet 128x128 | 2.97 | 0.78      | 0.59   |
-| ImageNet 256x256 | 4.59 | 0.82      | 0.52   |
-| ImageNet 512x512 | 7.72 | 0.87      | 0.42   |
-
-This table shows the best results for high resolutions when using upsampling and guidance together:
-
-| Dataset          | FID  | Precision | Recall |
-|------------------|------|-----------|--------|
-| ImageNet 256x256 | 3.94 | 0.83      | 0.53   |
-| ImageNet 512x512 | 3.85 | 0.84      | 0.53   |
-
-Finally, here are the unguided results on individual LSUN classes:
-
-| Dataset      | FID  | Precision | Recall |
-|--------------|------|-----------|--------|
-| LSUN Bedroom | 1.90 | 0.66      | 0.51   |
-| LSUN Cat     | 5.57 | 0.63      | 0.52   |
-| LSUN Horse   | 2.57 | 0.71      | 0.55   |
-
-# Training models
-
-Training diffusion models is described in the [parent repository](https://github.com/openai/improved-diffusion). Training a classifier is similar. We assume you have put training hyperparameters into a `TRAIN_FLAGS` variable, and classifier hyperparameters into a `CLASSIFIER_FLAGS` variable. Then you can run:
-
-```
-mpiexec -n N python scripts/classifier_train.py --data_dir path/to/imagenet $TRAIN_FLAGS $CLASSIFIER_FLAGS
-```
-
-Make sure to divide the batch size in `TRAIN_FLAGS` by the number of MPI processes you are using.
-
-Here are flags for training the 128x128 classifier. You can modify these for training classifiers at other resolutions:
-
+# Running tensorboard
+Go to the folder, which you indicated in `--log_dir`
 ```sh
-TRAIN_FLAGS="--iterations 300000 --anneal_lr True --batch_size 256 --lr 3e-4 --save_interval 10000 --weight_decay 0.05"
-CLASSIFIER_FLAGS="--image_size 128 --classifier_attention_resolutions 32,16,8 --classifier_depth 2 --classifier_width 128 --classifier_pool attention --classifier_resblock_updown True --classifier_use_scale_shift_norm True"
+tensorboard --logdir runs/ --port=6009 --bind_all
 ```
+The first raw of images correspond to low resolution input, the second row - high resolution target, the third row = prediction.
 
-For sampling from a 128x128 classifier-guided model, 25 step DDIM:
 
-```sh
-MODEL_FLAGS="--attention_resolutions 32,16,8 --class_cond True --image_size 128 --learn_sigma True --num_channels 256 --num_heads 4 --num_res_blocks 2 --resblock_updown True --use_fp16 True --use_scale_shift_norm True"
-CLASSIFIER_FLAGS="--image_size 128 --classifier_attention_resolutions 32,16,8 --classifier_depth 2 --classifier_width 128 --classifier_pool attention --classifier_resblock_updown True --classifier_use_scale_shift_norm True --classifier_scale 1.0 --classifier_use_fp16 True"
-SAMPLE_FLAGS="--batch_size 4 --num_samples 50000 --timestep_respacing ddim25 --use_ddim True"
-mpiexec -n N python scripts/classifier_sample.py \
-    --model_path /path/to/model.pt \
-    --classifier_path path/to/classifier.pt \
-    $MODEL_FLAGS $CLASSIFIER_FLAGS $SAMPLE_FLAGS
-```
-
-To sample for 250 timesteps without DDIM, replace `--timestep_respacing ddim25` to `--timestep_respacing 250`, and replace `--use_ddim True` with `--use_ddim False`.

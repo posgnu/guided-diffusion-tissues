@@ -25,6 +25,7 @@ def main():
     args = create_argparser().parse_args()
 
     dist_util.setup_dist()
+    print(dist.get_rank()) 
     if dist.get_rank() == 0:
         full_log_dir = logger.configure(dir=args.log_dir)
         tb = SummaryWriter(log_dir=os.path.join(full_log_dir, 'runs', datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")))
@@ -46,18 +47,17 @@ def main():
         args.data_dir,
         args.valid_samples,
         args.test_samples)
-    print(train_paths)
-    print(valid_paths)
+    print(len(train_paths))
+    print(len(valid_paths))
 
     train_data = load_superres_data(
         paths = train_paths,
         batch_size = args.batch_size,
         patch_size = args.patch_size,
     )
-    print('Done')
     valid_kwargs = load_data_for_validation(
             valid_paths,
-            args.tb_valid_im_num,
+            len(valid_paths),
             args.patch_size)
     
     if dist.get_rank() == 0:
@@ -83,6 +83,7 @@ def main():
         lr_anneal_steps=args.lr_anneal_steps,
         total_steps=args.total_steps,
         valid_kwargs=valid_kwargs,
+        tb_valid_im_num=args.tb_valid_im_num,
     ).run_loop()
 
     if dist.get_rank() == 0:
@@ -100,6 +101,7 @@ def load_data_for_validation(
             ))
     batch, model_kwargs = data
     model_kwargs["high_res"] = batch
+
     return model_kwargs
 
 def create_argparser():

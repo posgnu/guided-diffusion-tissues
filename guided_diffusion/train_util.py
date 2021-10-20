@@ -12,6 +12,7 @@ from . import dist_util, logger
 from .fp16_util import MixedPrecisionTrainer
 from .nn import update_ema
 from .resample import LossAwareSampler, UniformSampler
+import itertools
 
 # For ImageNet experiments, this was a good default value.
 # We found that the lg_loss_scale quickly climbed to
@@ -228,14 +229,16 @@ class TrainLoop:
         kwargs = self.valid_kwargs
         kwargs = {k: v.to(dist_util.dev()) for k,v in kwargs.items()}
         
-        high_res = kwargs["high_res"][:self.tb_valid_im_num]
-        low_res = kwargs["low_res"][:self.tb_valid_im_num]
+        visualization = {k: v[:self.tb_valid_im_num] for k,v in kwargs.items()}
+        
+        high_res = visualization["high_res"]
+        low_res = visualization["low_res"]
         batch_size = low_res.shape[0]
         sample_hight, sample_width = high_res.shape[2:]
         sample = self.diffusion.p_sample_loop(
                 self.model,
                 (self.tb_valid_im_num, 3, sample_hight, sample_width),
-                model_kwargs=kwargs)
+                model_kwargs=visualization)
 
         tensorboard = th.cat((low_res, high_res, sample), 2)
 
@@ -243,30 +246,32 @@ class TrainLoop:
         self.tb.add_images('test', tensorboard, self.step)
         
         #Validation losses
-        t = th.tensor([self.diffusion.num_timesteps] * shape[0], device=dist_util.dev())
-        compute_losses = functools.partial(
-                self.diffusion.training_losses,
-                self.ddp_model,
-                kwargs["high_res"],
-                t,
-                model_kwargs=kwargs,
-            )
+        
+        #shape = kwargs["high_res"].shape[0]
+        #t = th.tensor([self.diffusion.num_timesteps] * shape, device=dist_util.dev())
+        #compute_losses = functools.partial(
+        #        self.diffusion.training_losses,
+        #        self.ddp_model,
+        #        kwargs["high_res"],
+        #        t,
+        #        model_kwargs=kwargs,
+#            )
 
-        if last_batch or not self.use_ddp:
-            losses = compute_losses()
-        else:
-            with self.ddp_model.no_sync():
-                losses = compute_losses()
+     #   if not self.use_ddp:
+     #       losses = compute_losses()
+     #   else:
+     #       with self.ddp_model.no_sync():
+     #           losses = compute_losses()
 
-        if isinstance(self.schedule_sampler, LossAwareSampler):
-                self.schedule_sampler.update_with_local_losses(
-                    t, losses["loss"].detach()
-                )
+     #   if isinstance(self.schedule_sampler, LossAwareSampler):
+     #           self.schedule_sampler.update_with_local_losses(
+     #               t, losses["loss"].detach()
+     #           )
 
-        loss = (losses["loss"]).mean()
-        log_loss_dict('validation',
-                self.diffusion, t, {k: v * weights for k, v in losses.items()}, self.tb, self.step
-            )
+     #   loss = (losses["loss"]).mean()
+     #   log_loss_dict('validation',
+     #           self.diffusion, t, {k: v * weights for k, v in losses.items()}, self.tb, self.step
+     #       )
 
 
     def _update_ema(self):

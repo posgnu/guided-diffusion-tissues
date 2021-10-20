@@ -49,8 +49,6 @@ class SuperresImageDataset(Dataset):
             random_flip=True,
             ):
         super().__init__()
-        from pudb import set_trace
-        set_trace()
         self.patch_size = patch_size
         self.local_images = paths[shard:][::num_shards]
         self.random_crop = random_crop
@@ -60,7 +58,6 @@ class SuperresImageDataset(Dataset):
         return len(self.local_images)
 
     def __getitem__(self, idx):
-        print('Valid loader')
         high_res_path = self.local_images[idx]
         low_res_path = high_res_path.replace('high_res', 'low_res')
 
@@ -117,7 +114,7 @@ def _file_name(file_path):
 def _list_image_files_train_valid_test(data_dir, valid_samples, test_samples):
     paths = []
     for entry in sorted(bf.listdir(data_dir)):
-        if len(paths) < 2: #This is just for faster pipeline testing, comment during actual training
+        #if len(paths) < 2: #This is just for faster pipeline testing, comment during actual training
             if not entry.startswith('.'):
                 full_path = bf.join(data_dir, entry)
                 ext = entry.split(".")[-1]
@@ -125,8 +122,8 @@ def _list_image_files_train_valid_test(data_dir, valid_samples, test_samples):
                     paths.append(full_path)
                 elif bf.isdir(full_path):
                     paths.extend(_list_image_files_train_valid_test(full_path)) 
-        else:
-            break
+        #else:
+        #    break
 
     test_paths = [bf.join(data_dir, sample) for sample in test_samples]
     valid_paths = [bf.join(data_dir, sample) for sample in valid_samples]
