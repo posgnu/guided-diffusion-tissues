@@ -35,6 +35,7 @@ class TrainLoop:
         save_interval,
         resume_checkpoint,
         valid_kwargs,
+        tb_valid_im_num,
         use_fp16=False,
         fp16_scale_growth=1e-3,
         schedule_sampler=None,
@@ -62,9 +63,9 @@ class TrainLoop:
         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
-        self.total_steps = total_steps,
-        self.valid_kwargs = valid_kwargs,
-
+        self.total_steps = total_steps
+        self.valid_kwargs = valid_kwargs
+        self.tb_valid_im_num = tb_valid_im_num
         self.step = 0
         self.resume_step = 0
         self.global_batch = self.batch_size * dist.get_world_size()
@@ -162,16 +163,14 @@ class TrainLoop:
             or self.step + self.resume_step < self.lr_anneal_steps
             and self.step < self.total_steps
         ):
-            print('Start')
             batch, cond = next(self.data)
-            print('Stop')
             self.run_step(batch, cond)
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
             if self.step % self.save_interval == 0:
                 self.save()
-                
-                self.test()
+                if dist.get_rank() == 0:
+                    self.test()
                 # Run for a finite amount of time in integration tests.
                 if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
                     return
@@ -191,9 +190,6 @@ class TrainLoop:
     def forward_backward(self, batch, cond):
         self.mp_trainer.zero_grad()
         for i in range(0, batch.shape[0], self.microbatch):
-            from pudb import set_trace
-            set_trace()
-
             micro = batch[i : i + self.microbatch].to(dist_util.dev())
             micro_cond = {
                 k: v[i : i + self.microbatch].to(dist_util.dev())
@@ -222,7 +218,7 @@ class TrainLoop:
                 )
 
             loss = (losses["loss"] * weights).mean()
-            log_loss_dict(
+            log_loss_dict('train',
                 self.diffusion, t, {k: v * weights for k, v in losses.items()}, self.tb, self.step
             )
             self.mp_trainer.backward(loss)
@@ -232,19 +228,45 @@ class TrainLoop:
         kwargs = self.valid_kwargs
         kwargs = {k: v.to(dist_util.dev()) for k,v in kwargs.items()}
         
-        high_res = kwargs["high_res"]
-        low_res = kwargs["low_res"]
-        
+        high_res = kwargs["high_res"][:self.tb_valid_im_num]
+        low_res = kwargs["low_res"][:self.tb_valid_im_num]
+        batch_size = low_res.shape[0]
         sample_hight, sample_width = high_res.shape[2:]
         sample = self.diffusion.p_sample_loop(
                 self.model,
-                (len(kwargs), 3, sample_hight, sample_width),
+                (self.tb_valid_im_num, 3, sample_hight, sample_width),
                 model_kwargs=kwargs)
 
         tensorboard = th.cat((low_res, high_res, sample), 2)
 
         tensorboard = ((tensorboard + 1) * 127.5).clamp(0, 255).to(th.uint8)
         self.tb.add_images('test', tensorboard, self.step)
+        
+        #Validation losses
+        t = th.tensor([self.diffusion.num_timesteps] * shape[0], device=dist_util.dev())
+        compute_losses = functools.partial(
+                self.diffusion.training_losses,
+                self.ddp_model,
+                kwargs["high_res"],
+                t,
+                model_kwargs=kwargs,
+            )
+
+        if last_batch or not self.use_ddp:
+            losses = compute_losses()
+        else:
+            with self.ddp_model.no_sync():
+                losses = compute_losses()
+
+        if isinstance(self.schedule_sampler, LossAwareSampler):
+                self.schedule_sampler.update_with_local_losses(
+                    t, losses["loss"].detach()
+                )
+
+        loss = (losses["loss"]).mean()
+        log_loss_dict('validation',
+                self.diffusion, t, {k: v * weights for k, v in losses.items()}, self.tb, self.step
+            )
 
 
     def _update_ema(self):
@@ -326,11 +348,12 @@ def find_ema_checkpoint(main_checkpoint, step, rate):
     return None
 
 
-def log_loss_dict(diffusion, ts, losses, tensorboard, step):
+def log_loss_dict(phase, diffusion, ts, losses, tensorboard, step):
     for key, values in losses.items():
         logger.logkv_mean(key, values.mean().item())
         # Log the quantiles (four quartiles, in particular).
         for sub_t, sub_loss in zip(ts.cpu().numpy(), values.detach().cpu().numpy()):
             quartile = int(4 * sub_t / diffusion.num_timesteps)
-            logger.logkv_mean(f"{key}_q{quartile}", sub_loss)
-            tensorboard.add_scalar(f"train/{key}_q{quartile}", sub_loss, step) 
+            logger.logkv_mean(f"{phase}_{key}_q{quartile}", sub_loss)
+            if dist.get_rank() == 0:
+                tensorboard.add_scalar(f"{phase}/{key}_q{quartile}", sub_loss, step) 
