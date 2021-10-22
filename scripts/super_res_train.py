@@ -33,6 +33,7 @@ def main():
         logger.log("creating model and diffusion...")
     else:
         tb=None
+    print(args)
     model, diffusion = sr_create_model_and_diffusion(
         **args_to_dict(args, sr_model_and_diffusion_defaults().keys())
     )

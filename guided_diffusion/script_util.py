@@ -268,6 +268,7 @@ def create_classifier(
 
 def sr_model_and_diffusion_defaults():
     res = model_and_diffusion_defaults()
+    res["patch_size"] = 128
     arg_names = inspect.getfullargspec(sr_create_model_and_diffusion)[0]
     for k in res.copy().keys():
         if k not in arg_names:
@@ -276,8 +277,7 @@ def sr_model_and_diffusion_defaults():
 
 
 def sr_create_model_and_diffusion(
-    large_size,
-    small_size,
+    patch_size,
     class_cond,
     learn_sigma,
     num_channels,
@@ -300,8 +300,7 @@ def sr_create_model_and_diffusion(
     use_fp16,
 ):
     model = sr_create_model(
-        large_size,
-        small_size,
+        patch_size,
         num_channels,
         num_res_blocks,
         learn_sigma=learn_sigma,
@@ -330,8 +329,7 @@ def sr_create_model_and_diffusion(
 
 
 def sr_create_model(
-    large_size,
-    small_size,
+    patch_size,
     num_channels,
     num_res_blocks,
     learn_sigma,
@@ -346,23 +344,23 @@ def sr_create_model(
     resblock_updown,
     use_fp16,
 ):
-    _ = small_size  # hack to prevent unused variable
+   # _ = small_size  # hack to prevent unused variable
 
-    if large_size == 512:
+    if patch_size == 512:
         channel_mult = (1, 1, 2, 2, 4, 4)
-    elif large_size == 256:
+    elif patch_size == 256:
         channel_mult = (1, 1, 2, 2, 4, 4)
-    elif large_size == 64:
+    elif patch_size == 128:
         channel_mult = (1, 2, 3, 4)
     else:
-        raise ValueError(f"unsupported large size: {large_size}")
+        raise ValueError(f"unsupported patch size: {patch_size}")
 
     attention_ds = []
     for res in attention_resolutions.split(","):
-        attention_ds.append(large_size // int(res))
+        attention_ds.append(patch_size // int(res))
 
     return SuperResModel(
-        image_size=large_size,
+        image_size=patch_size,
         in_channels=3,
         model_channels=num_channels,
         out_channels=(3 if not learn_sigma else 6),
