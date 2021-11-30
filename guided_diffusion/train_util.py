@@ -226,24 +226,25 @@ class TrainLoop:
 
 
     def test(self):
-        kwargs = self.valid_kwargs
-        kwargs = {k: v.to(dist_util.dev()) for k,v in kwargs.items()}
+        with th.no_grad():
+            kwargs = self.valid_kwargs
+            kwargs = {k: v.to(dist_util.dev()) for k,v in kwargs.items()}
         
-        visualization = {k: v[:self.tb_valid_im_num] for k,v in kwargs.items()}
+            visualization = {k: v[:self.tb_valid_im_num] for k,v in kwargs.items()}
         
-        high_res = visualization["high_res"]
-        low_res = visualization["low_res"]
-        batch_size = low_res.shape[0]
-        sample_hight, sample_width = high_res.shape[2:]
-        sample = self.diffusion.p_sample_loop(
+            high_res = visualization["high_res"]
+            low_res = visualization["low_res"]
+            batch_size = low_res.shape[0]
+            sample_hight, sample_width = high_res.shape[2:]
+            sample = self.diffusion.p_sample_loop(
                 self.model,
                 (self.tb_valid_im_num, 3, sample_hight, sample_width),
                 model_kwargs=visualization)
 
-        tensorboard = th.cat((low_res, high_res, sample), 2)
+            tensorboard = th.cat((low_res, high_res, sample), 2)
 
-        tensorboard = ((tensorboard + 1) * 127.5).clamp(0, 255).to(th.uint8)
-        self.tb.add_images('test', tensorboard, self.step)
+            tensorboard = ((tensorboard + 1) * 127.5).clamp(0, 255).to(th.uint8)
+            self.tb.add_images('test', tensorboard, self.step)
         
         #Validation losses
         
