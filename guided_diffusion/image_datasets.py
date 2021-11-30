@@ -6,7 +6,106 @@ from PIL import Image
 import blobfile as bf
 from mpi4py import MPI
 import numpy as np
+import torch as th
 from torch.utils.data import DataLoader, Dataset
+import torch.nn.functional as F
+import cv2
+
+def load_superres_downsampled_data(
+    *,
+    paths,
+    batch_size,
+    patch_size,
+    deterministic=False,
+    random_crop=True,
+    random_flip=True,
+    ):
+    if not paths:
+        raise ValueError("unspecified paths")
+    dataset = SuperresDownImageDataset(
+                patch_size,
+                paths,
+                shard=MPI.COMM_WORLD.Get_rank(),
+                num_shards=MPI.COMM_WORLD.Get_size(),
+                random_crop=random_crop,
+                random_flip=random_flip,
+                )
+    if deterministic:
+        loader = DataLoader(
+            dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
+        )
+    else:
+        loader = DataLoader(
+            dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
+        )
+    while True:
+        yield from loader
+
+class SuperresDownImageDataset(Dataset):
+    def __init__(
+            self, 
+            patch_size,
+            paths,
+            shard=0,
+            num_shards=1,
+            random_crop=True,
+            random_flip=True,
+            ):
+        super().__init__()
+        self.patch_size = patch_size
+        self.local_images = paths[shard:][::num_shards]
+        self.random_crop = random_crop
+        self.random_flip = random_flip
+
+    def __len__(self):
+        return len(self.local_images)
+
+    def __getitem__(self, idx):
+        high_res_path = self.local_images[idx]
+        low_res_path = high_res_path.replace('high_res', 'low_res')
+
+        with bf.BlobFile(high_res_path, "rb") as f:
+            high_res_pil_image = Image.open(f)
+            high_res_pil_image.load()
+        with bf.BlobFile(low_res_path, "rb") as f:
+            low_res_pil_image = Image.open(f)
+            low_res_pil_image.load()
+        if high_res_pil_image.size != low_res_pil_image.size:
+            return self.__getitem__(idx+1)
+
+        high_res_pil_image = high_res_pil_image.convert("RGB")
+        low_res_pil_image = low_res_pil_image.convert("RGB")
+
+        if self.random_crop:
+            high_res_arr, _  = random_crop_arr_input_target(
+                        high_res_pil_image,
+                        low_res_pil_image,
+                        self.patch_size)
+            if is_white(high_res_arr) or is_black(high_res_arr):
+                return self.__getitem__(idx)
+
+        if self.random_flip and random.random() < 0.5:
+            high_res_arr = high_res_arr[:, ::-1]
+            #low_res_arr = low_res_arr[:, ::-1]
+
+        high_res_arr = high_res_arr.astype(np.float32) / 127.5 - 1
+        #low_res_arr = low_res_arr.astype(np.float32) / 127.5 - 1
+        
+
+        out_dict = {}
+
+        new_hight, new_width = self.patch_size//4, self.patch_size//4
+        downsampled = cv2.resize(high_res_arr, (new_width, new_hight))
+        upsampled = cv2.resize(downsampled, (self.patch_size, self.patch_size))
+
+        high_res = np.transpose(high_res_arr, [2, 0, 1])
+        low_res = np.transpose(upsampled, [2, 0, 1])
+
+       # downsampled = F.interpolate(high_res, (new_hight, new_width), mode="bilinear")
+        #upsampled = F.interpolate(downsampled, (self.patch_size, self.patch_size), mode="bilinear")
+        out_dict["low_res"] = low_res
+        return high_res, out_dict
+
 
 def load_superres_data(
     *,
