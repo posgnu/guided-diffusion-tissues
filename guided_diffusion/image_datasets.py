@@ -81,8 +81,8 @@ class SuperresDownImageDataset(Dataset):
                         high_res_pil_image,
                         low_res_pil_image,
                         self.patch_size)
-            if is_white(high_res_arr) or is_black(high_res_arr):
-                return self.__getitem__(idx)
+            #if is_white(high_res_arr) or is_black(high_res_arr):
+                #return self.__getitem__(idx)
 
         if self.random_flip and random.random() < 0.5:
             high_res_arr = high_res_arr[:, ::-1]
@@ -177,8 +177,8 @@ class SuperresImageDataset(Dataset):
                         high_res_pil_image,
                         low_res_pil_image,
                         self.patch_size)
-            if is_white(high_res_arr) or is_black(high_res_arr):
-                return self.__getitem__(idx)
+            #if is_white(high_res_arr) or is_black(high_res_arr):
+                #return self.__getitem__(idx)
 
         if self.random_flip and random.random() < 0.5:
             high_res_arr = high_res_arr[:, ::-1]
@@ -236,7 +236,10 @@ def random_crop_arr_input_target(pil_image_target, pil_image_input, patch_size):
     arr_input = np.array(pil_image_input) 
     crop_y = random.randrange(arr_target.shape[0] - patch_size + 1)
     crop_x = random.randrange(arr_target.shape[1] - patch_size + 1)
-    return arr_target[crop_y : crop_y + patch_size, crop_x : crop_x + patch_size], arr_input[crop_y : crop_y + patch_size, crop_x : crop_x + patch_size]
+    if is_white(arr_target_crop) or is_black(arr_input_crop):
+        return random_crop_arr_input_target(pil_image_target, pil_image_input, patch_size)
+    return arr_target_crop, arr_input_crop
+
 
 def load_data(
     *,
