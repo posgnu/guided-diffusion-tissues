@@ -236,7 +236,7 @@ def random_crop_arr_input_target(pil_image_target, pil_image_input, patch_size):
     arr_input = np.array(pil_image_input) 
     crop_y = random.randrange(arr_target.shape[0] - patch_size + 1)
     crop_x = random.randrange(arr_target.shape[1] - patch_size + 1)
-    if is_white(arr_target_crop) or is_black(arr_input_crop):
+    if is_white(arr_target_crop) or is_black(arr_target_crop):
         return random_crop_arr_input_target(pil_image_target, pil_image_input, patch_size)
     return arr_target_crop, arr_input_crop
 

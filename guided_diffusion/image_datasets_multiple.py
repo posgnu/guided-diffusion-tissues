@@ -69,7 +69,7 @@ class SuperresImageDataset(Dataset):
         high_res_path = self.local_images[idx]
         lr_root_dir = '/'.join(high_res_path.split('/')[:-1]).replace('Registered Images', 'Upscale')
         lr_images = [os.path.join(lr_root_dir, file) for file in sorted(bf.listdir(lr_root_dir)) if not file.startswith('.')]
-        range_images = np.arange(14,len(lr_images),len(lr_images)//self.n_illum+1)
+        range_images = np.arange(0,len(lr_images),len(lr_images)//self.n_illum+1)
 
         with bf.BlobFile(high_res_path, "rb") as f:
             high_res_pil_image = Image.open(f)
@@ -158,7 +158,7 @@ def random_crop_arr_input_target(pil_image_target, pil_image_input, patch_size):
     arr_target_crop = arr_target[crop_y : crop_y + patch_size, crop_x : crop_x + patch_size]
     arr_input_crop = arr_input[crop_y : crop_y + patch_size, crop_x : crop_x + patch_size]
 
-    if is_white(arr_target_crop) or is_black(arr_input_crop):
+    if is_white(arr_target_crop) or is_black(arr_target_crop):
         return random_crop_arr_input_target(pil_image_target, pil_image_input, patch_size)
     return arr_target_crop, arr_input_crop
 
