@@ -81,7 +81,6 @@ class SuperresImageDataset(Dataset):
         for i in range_images:
             with bf.BlobFile(lr_images[i], "rb") as f:
                 low_res_i_pil_image = Image.open(f)
-                print(f)
                 low_res_i_pil_image.load()
                 low_res_i_pil_image = low_res_i_pil_image.convert("RGB")
 
@@ -160,7 +159,6 @@ def random_crop_arr_input_target(pil_image_target, pil_image_input, patch_size):
     arr_input_crop = arr_input[crop_y : crop_y + patch_size, crop_x : crop_x + patch_size]
 
     if is_white(arr_target_crop) or is_black(arr_input_crop):
-        print('yes')
         return random_crop_arr_input_target(pil_image_target, pil_image_input, patch_size)
     return arr_target_crop, arr_input_crop
 
