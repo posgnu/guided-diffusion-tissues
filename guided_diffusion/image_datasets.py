@@ -1,3 +1,5 @@
+from typing import Tuple, Union, List
+
 import math
 import random
 import os
@@ -10,6 +12,178 @@ import torch as th
 from torch.utils.data import DataLoader, Dataset
 import torch.nn.functional as F
 import cv2
+
+from os import path
+from glob import glob
+from tqdm import tqdm
+
+
+def load_preloaded_superres_downsampled_data(
+    *,
+    paths,
+    batch_size,
+    patch_size,
+    deterministic=False,
+    random_crop=True,
+    random_flip=True,
+):
+    if not paths:
+        raise ValueError("unspecified paths")
+
+    dataset = PreloadedImageDataset(
+                epoch_length=len(paths),
+                image_paths=paths,
+                patch_size=patch_size,
+                shard=MPI.COMM_WORLD.Get_rank(),
+                num_shards=MPI.COMM_WORLD.Get_size(),
+                random_crop=random_crop,
+                random_flip=random_flip,
+                compatible=True
+    )
+
+    loader = DataLoader(
+        dataset, batch_size=batch_size, shuffle=not deterministic, num_workers=1, drop_last=True
+    )
+
+    while True:
+        yield from loader
+
+
+class PreloadedImageDataset(Dataset):
+    def __init__(
+            self,
+            epoch_length: int,
+            image_paths: Union[str, List[str]],
+            patch_size: Union[int, Tuple[int, int]],
+            shard=0,
+            num_shards=1,
+            random_crop=True,
+            random_flip=True,
+            compatible: bool = False
+    ):
+        super().__init__()
+
+        # Format inputs to be consistent
+        if isinstance(patch_size, int):
+            patch_size = (patch_size, patch_size)
+
+        patch_size = np.array(patch_size)
+        self.patch_size = patch_size
+        self.epoch_length = epoch_length
+        self.random_crop = random_crop
+        self.random_flip = random_flip
+        self.compatible = compatible
+
+        if isinstance(image_paths, str):
+            image_paths = glob(f"{image_paths}/high_res/*.tif")
+
+        image_paths = image_paths[shard:][::num_shards]
+
+        # Load from cache if we already did this.
+        base_dir = "/".join(image_paths[0].split("/")[:-2])
+        cache_file = f"{base_dir}/{hash(tuple(image_paths))}.cache"
+        if path.isfile(cache_file):
+            print("Loading images from cache file.")
+            high_res_images, low_res_images, upscaled_images, index_sizes, images_sizes = th.load(cache_file)
+
+        else:
+            high_res_images = []
+            low_res_images = []
+            upscaled_images = []
+            index_sizes = []
+            images_sizes = []
+
+            print("Loading images from disk.")
+            for image_path in tqdm(sorted(glob(f"{image_paths}/high_res/*.tif"))):
+                high_res_image = self.load_image(image_path)
+                low_res_image = self.load_image(image_path.replace("high_res", "low_res"))
+
+                # Make an alternative low-res image bby downscaling and upscaling the original.
+                upscaled_image = high_res_image.float().unsqueeze(0)
+                upscaled_image = F.interpolate(upscaled_image, scale_factor=0.5, mode="bilinear")
+                upscaled_image = F.interpolate(upscaled_image, size=high_res_image.shape[1:], mode="bilinear")
+                upscaled_image = upscaled_image.squeeze(0).round().byte()
+
+                current_image_size = np.array(high_res_image.shape[1:])
+                index_size = np.array(current_image_size) - patch_size + 1
+
+                high_res_images.append(high_res_image)
+                low_res_images.append(low_res_image)
+                upscaled_images.append(upscaled_image)
+                index_sizes.append(index_size)
+                images_sizes.append(current_image_size)
+
+            high_res_images = th.concat([image.reshape(3, -1) for image in high_res_images], dim=1)
+            low_res_images = th.concat([image.reshape(3, -1) for image in low_res_images], dim=1)
+            upscaled_images = th.concat([image.reshape(3, -1) for image in upscaled_images], dim=1)
+            index_sizes = np.array(index_sizes)
+            images_sizes = np.array(images_sizes)
+
+            th.save(f=cache_file, obj=(
+                high_res_images,
+                low_res_images,
+                upscaled_images,
+                index_sizes,
+                images_sizes
+            ))
+
+        self.high_res_images = high_res_images
+        self.low_res_images = low_res_images
+        self.upscaled_images = upscaled_images
+        self.index_sizes = index_sizes
+        self.images_sizes = images_sizes
+
+        self.flat_image_sizes = np.cumsum([0] + list(map(np.prod, images_sizes)))
+        self.num_patches_per_image = list(map(np.prod, index_sizes))
+        self.patch_idx = np.cumsum([0] + self.num_patches_per_image)[:-1]
+
+    @staticmethod
+    def load_image(path: str):
+        image_array = np.array(Image.open(path).convert("RGB"))
+        return th.from_numpy(image_array).permute(2, 0, 1)
+
+    def __len__(self):
+        return self.epoch_length
+
+    def __getitem__(self, idx):
+        idx = idx % len(self.images_sizes)
+
+        # Convert flat image into proper image shape
+        image_lower = self.flat_image_sizes[idx]
+        image_upper = self.flat_image_sizes[idx + 1]
+        image_size = (3, *self.images_sizes[idx])
+
+        high_res_image = self.high_res_images[:, image_lower:image_upper].reshape(image_size)
+        low_res_image = self.low_res_images[:, image_lower:image_upper].reshape(image_size)
+        upscaled_image = self.upscaled_images[:, image_lower:image_upper].reshape(image_size)
+        index_size = self.index_sizes[idx]
+
+        # Find a random patch and extract that patch from all images
+        if self.random_crop:
+            patch_lower = np.random.randint(np.zeros_like(index_size), index_size)
+            patch_upper = patch_lower + self.patch_size
+
+            high_res_image = high_res_image[:, patch_lower[0]:patch_upper[0], patch_lower[1]:patch_upper[1]]
+            low_res_image = low_res_image[:, patch_lower[0]:patch_upper[0], patch_lower[1]:patch_upper[1]]
+            upscaled_image = upscaled_image[:, patch_lower[0]:patch_upper[0], patch_lower[1]:patch_upper[1]]
+
+        high_res_image = high_res_image.float() / 255
+        low_res_image = low_res_image.float() / 255
+        upscaled_image = upscaled_image.float() / 255
+
+        # Possibly flip image
+        if self.random_flip and np.random.random() < 0.5:
+            high_res_image = th.flip(high_res_image, dims=(1,))
+            low_res_image = th.flip(low_res_image, dims=(1,))
+            upscaled_image = th.flip(upscaled_image, dims=(1,))
+
+        # Old style return
+        if self.compatible:
+            return high_res_image, {"low_res": low_res_image}
+
+        # Return the full resolution and two types of downscales.
+        return high_res_image, low_res_image, upscaled_image
+
 
 def load_superres_downsampled_data(
     *,
