@@ -4,7 +4,15 @@ This is the codebase for the project on improving the resolution of tissue image
 
 We aim to try various CNN models, including recently reliazed guided diffusion models. We heavily rely on the codebase for [Diffusion Models Beat GANS on Image Synthesis](http://arxiv.org/abs/2105.05233) [openai/guided-diffusion](https://github.com/openai/guided-diffusion).
 
-# MPI
+## Prerequisites
+```shellscript
+pip install -e .
+```
+```shellscript
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/anaconda3/lib
+```
+
+## MPI
 For running with `mpi`, you need to install it. I did `conda install -c conda-forge mpi4py`. 
 
 # Data exploration
@@ -39,7 +47,7 @@ After each `--save_interval`, the validation set is visualized to tensorboard. `
 mpiexec -n 2 python3 scripts/super_res_train.py \
 --patch_size 128 \
 --data_dir /baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/high_res \
---log_dir .. \
+--log_dir log \
 --diffusion_steps 1000 \
 --noise_schedule "linear" \
 --num_channels 192 \
