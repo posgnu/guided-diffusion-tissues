@@ -1,2 +1,7 @@
 guided_diffusion.egg-info
 __pycache__
+log
+test-result
+log-fine-tune
+pre-train-log-128
+log/

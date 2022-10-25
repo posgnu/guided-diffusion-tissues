@@ -1,3 +1,27 @@
 Logging to log
-creating model and diffusion...
-creating data loader...
+Worker 0: Creating logger
+Worker 0: Creating model and diffusion...
+Worker 0: Creating data loader...
+Worker 0: The size of training set 131
+Worker 0: The size of validation set 8
+Worker 0: Training data loaded
+Worker 0: Training started
+Worker 0: Training loop constructed
+----------------------------
+| grad_norm     | 3.59     |
+| loss          | 1        |
+| mse           | 1        |
+| param_norm    | 240      |
+| samples       | 128      |
+| step          | 0        |
+| train_loss_q0 | 1        |
+| train_loss_q1 | 1        |
+| train_loss_q2 | 0.999    |
+| train_loss_q3 | 0.997    |
+| train_mse_q0  | 1        |
+| train_mse_q1  | 1        |
+| train_mse_q2  | 0.999    |
+| train_mse_q3  | 0.997    |
+----------------------------
+saving model 0...
+saving model 0.9999...

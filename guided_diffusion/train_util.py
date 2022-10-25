@@ -13,6 +13,7 @@ from .fp16_util import MixedPrecisionTrainer
 from .nn import update_ema
 from .resample import LossAwareSampler, UniformSampler
 import itertools
+import torch
 
 # For ImageNet experiments, this was a good default value.
 # We found that the lg_loss_scale quickly climbed to
@@ -97,6 +98,7 @@ class TrainLoop:
             ]
 
         if th.cuda.is_available():
+
             self.use_ddp = True
             self.ddp_model = DDP(
                 self.model,
@@ -106,6 +108,7 @@ class TrainLoop:
                 bucket_cap_mb=128,
                 find_unused_parameters=False,
             )
+
         else:
             if dist.get_world_size() > 1:
                 logger.warn(
@@ -116,6 +119,7 @@ class TrainLoop:
             self.ddp_model = self.model
 
     def _load_and_sync_parameters(self):
+
         resume_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
 
         if resume_checkpoint:
@@ -123,9 +127,7 @@ class TrainLoop:
             if dist.get_rank() == 0:
                 logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
                 self.model.load_state_dict(
-                    dist_util.load_state_dict(
-                        resume_checkpoint, map_location=dist_util.dev()
-                    )
+                    torch.load(resume_checkpoint, map_location=dist_util.dev())
                 )
 
         dist_util.sync_params(self.model.parameters())
@@ -138,9 +140,7 @@ class TrainLoop:
         if ema_checkpoint:
             if dist.get_rank() == 0:
                 logger.log(f"loading EMA from checkpoint: {ema_checkpoint}...")
-                state_dict = dist_util.load_state_dict(
-                    ema_checkpoint, map_location=dist_util.dev()
-                )
+                state_dict = torch.load(ema_checkpoint, map_location=dist_util.dev())
                 ema_params = self.mp_trainer.state_dict_to_master_params(state_dict)
 
         dist_util.sync_params(ema_params)
@@ -153,20 +153,21 @@ class TrainLoop:
         )
         if bf.exists(opt_checkpoint):
             logger.log(f"loading optimizer state from checkpoint: {opt_checkpoint}")
-            state_dict = dist_util.load_state_dict(
-                opt_checkpoint, map_location=dist_util.dev()
-            )
+            state_dict = torch.load(opt_checkpoint, map_location=dist_util.dev())
             self.opt.load_state_dict(state_dict)
 
     def run_loop(self):
+        # FIXME: infinite loop?
         while (
             not self.lr_anneal_steps
             or self.step + self.resume_step < self.lr_anneal_steps
             and self.step < self.total_steps
         ):
+
             batch, cond = next(self.data)
             self.run_step(batch, cond)
             if self.step % self.log_interval == 0:
+                print(f"step {self.step}")
                 logger.dumpkvs()
             if self.step % self.save_interval == 0:
                 self.save()
@@ -219,61 +220,67 @@ class TrainLoop:
                 )
 
             loss = (losses["loss"] * weights).mean()
-            log_loss_dict('train',
-                self.diffusion, t, {k: v * weights for k, v in losses.items()}, self.tb, self.step
+            log_loss_dict(
+                "train",
+                self.diffusion,
+                t,
+                {k: v * weights for k, v in losses.items()},
+                self.tb,
+                self.step,
             )
             self.mp_trainer.backward(loss)
-
 
     def test(self):
         with th.no_grad():
             kwargs = self.valid_kwargs
-            kwargs = {k: v.to(dist_util.dev()) for k,v in kwargs.items()}
-        
-            visualization = {k: v[:self.tb_valid_im_num] for k,v in kwargs.items()}
-        
+            kwargs = {k: v.to(dist_util.dev()) for k, v in kwargs.items()}
+
+            visualization = {k: v[: self.tb_valid_im_num] for k, v in kwargs.items()}
+
             high_res = visualization["high_res"]
             low_res = visualization["low_res"]
             batch_size = low_res.shape[0]
             sample_hight, sample_width = high_res.shape[2:]
+
             sample = self.diffusion.p_sample_loop(
                 self.model,
                 (self.tb_valid_im_num, 3, sample_hight, sample_width),
-                model_kwargs=visualization)
+                model_kwargs=visualization,
+            )
 
             tensorboard = th.cat((low_res, high_res, sample), 2)
 
             tensorboard = ((tensorboard + 1) * 127.5).clamp(0, 255).to(th.uint8)
-            self.tb.add_images('test', tensorboard, self.step)
-        
-        #Validation losses
-        
-        #shape = kwargs["high_res"].shape[0]
-        #t = th.tensor([self.diffusion.num_timesteps] * shape, device=dist_util.dev())
-        #compute_losses = functools.partial(
+            self.tb.add_images("test", tensorboard, self.step)
+
+        # Validation losses
+
+        # shape = kwargs["high_res"].shape[0]
+        # t = th.tensor([self.diffusion.num_timesteps] * shape, device=dist_util.dev())
+        # compute_losses = functools.partial(
         #        self.diffusion.training_losses,
         #        self.ddp_model,
         #        kwargs["high_res"],
         #        t,
         #        model_kwargs=kwargs,
-#            )
 
-     #   if not self.use_ddp:
-     #       losses = compute_losses()
-     #   else:
-     #       with self.ddp_model.no_sync():
-     #           losses = compute_losses()
+    #            )
 
-     #   if isinstance(self.schedule_sampler, LossAwareSampler):
-     #           self.schedule_sampler.update_with_local_losses(
-     #               t, losses["loss"].detach()
-     #           )
+    #   if not self.use_ddp:
+    #       losses = compute_losses()
+    #   else:
+    #       with self.ddp_model.no_sync():
+    #           losses = compute_losses()
 
-     #   loss = (losses["loss"]).mean()
-     #   log_loss_dict('validation',
-     #           self.diffusion, t, {k: v * weights for k, v in losses.items()}, self.tb, self.step
-     #       )
+    #   if isinstance(self.schedule_sampler, LossAwareSampler):
+    #           self.schedule_sampler.update_with_local_losses(
+    #               t, losses["loss"].detach()
+    #           )
 
+    #   loss = (losses["loss"]).mean()
+    #   log_loss_dict('validation',
+    #           self.diffusion, t, {k: v * weights for k, v in losses.items()}, self.tb, self.step
+    #       )
 
     def _update_ema(self):
         for rate, params in zip(self.ema_rate, self.ema_params):
@@ -362,4 +369,5 @@ def log_loss_dict(phase, diffusion, ts, losses, tensorboard, step):
             quartile = int(4 * sub_t / diffusion.num_timesteps)
             logger.logkv_mean(f"{phase}_{key}_q{quartile}", sub_loss)
             if dist.get_rank() == 0:
-                tensorboard.add_scalar(f"{phase}/{key}_q{quartile}", sub_loss, step) 
+                tensorboard.add_scalar(f"{phase}/{key}_q{quartile}", sub_loss, step)
+

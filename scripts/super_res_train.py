@@ -4,13 +4,18 @@ Train a super-resolution model.
 
 import argparse
 
+from mpi4py import MPI
 import torch.nn.functional as F
 import torch.distributed as dist
-from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard.writer import SummaryWriter
 
 import os
 from guided_diffusion import dist_util, logger
-from guided_diffusion.image_datasets import load_superres_data, _list_image_files_train_valid_test
+from guided_diffusion.image_datasets import (
+    load_superres_data,
+    image_files_train_valid_test_split,
+    load_data,
+)
 from guided_diffusion.resample import create_named_schedule_sampler
 from guided_diffusion.script_util import (
     sr_model_and_diffusion_defaults,
@@ -21,51 +26,118 @@ from guided_diffusion.script_util import (
 from guided_diffusion.train_util import TrainLoop
 import datetime
 
+
 def main():
     args = create_argparser().parse_args()
 
     dist_util.setup_dist()
-    print(dist.get_rank()) 
-    if dist.get_rank() == 0:
-        full_log_dir = logger.configure(dir=args.log_dir)
-        tb = SummaryWriter(log_dir=os.path.join(full_log_dir, 'runs', datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")))
+    logger.log(f"Worker {dist.get_rank()}: started")
 
-        logger.log("creating model and diffusion...")
+    full_log_dir = logger.configure(dir=args.log_dir)
+    log_sub_dir = os.path.join(
+        full_log_dir, "runs", datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S"),
+    )
+    if dist.get_rank() == 0:
+        # Set summarywriter only for the thread 0
+        tb = SummaryWriter(log_dir=log_sub_dir)
+        logger.log(f"Worker {dist.get_rank()}: Creating logger")
     else:
-        tb=None
-    print(args)
+        tb = None
+
+    logger.log(f"Worker {dist.get_rank()}: Creating model and diffusion...")
     model, diffusion = sr_create_model_and_diffusion(
         **args_to_dict(args, sr_model_and_diffusion_defaults().keys())
     )
-    if args.resume_checkpoint is not None:
-        dist_util.load_state_dict(args.model_path, map_location="cpu")
+    if args.model_path:
+        model.load_state_dict(
+            dist_util.load_state_dict(args.model_path, map_location="cpu")
+        )
+        logger.log(f"Worker {dist.get_rank()}: Model loaded")
+
     model.to(dist_util.dev())
+
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
 
-    logger.log("creating data loader...")
-    
-    train_paths, valid_paths, test_paths = _list_image_files_train_valid_test(
-        args.data_dir,
-        args.valid_samples,
-        args.test_samples)
-    print(len(train_paths))
-    print(len(valid_paths))
+    logger.log(f"Worker {dist.get_rank()}: Creating data loader...")
+    if not args.pre_train:
+        """
+        val_files = [
+            "Slide002-2.tif",
+            "Slide003-2.tif",
+            "Slide005-1.tif",
+            "Slide008-1.tif",
+            "Slide008-2.tif",
+            "Slide010-1.tif",
+            "Slide011-1.tif",
+            "Slide011-5.tif",
+        ]
+        """
+        val_files = [
+            "Slide011-6.tif",
+            "Slide019-3.tif",
+            "Slide022-1.tif",
+            "Slide022-3.tif",
+            "Slide023-3.tif",
+            "Slide025-1.tif",
+            "Slide028-1.tif",
+            "Slide029-3.tif",
+        ]
+        train_paths, valid_paths = image_files_train_valid_test_split(
+            args.data_dir, val_files, 0.3
+        )
 
-    train_data = load_superres_data(
-        paths = train_paths,
-        batch_size = args.batch_size,
-        patch_size = args.patch_size,
-    )
-    valid_kwargs = load_data_for_validation(
-            valid_paths,
-            len(valid_paths),
-            args.patch_size)
-    
+        logger.log(
+            f"Worker {dist.get_rank()}: The size of training set {len(train_paths)}"
+        )
+        logger.log(
+            f"Worker {dist.get_rank()}: The size of validation set {len(valid_paths)}"
+        )
+        train_data = load_superres_data(
+            paths=train_paths,
+            batch_size=args.batch_size,
+            patch_size=args.patch_size,
+            deterministic=False,
+        )
+
+        logger.log(f"Worker {dist.get_rank()}: Training data loaded")
+        # This prevent dataloading stuck
+        new_valid_paths = []
+        for path in valid_paths:
+            for _ in range(MPI.COMM_WORLD.Get_size()):
+                new_valid_paths.append(path)
+
+        if dist.get_rank() == 0:
+            valid_kwargs = load_data_for_validation(
+                new_valid_paths, args.tb_valid_im_num, args.patch_size
+            )
+        else:
+            valid_kwargs = None
+    else:
+        logger.log(f"Worker {dist.get_rank()}: Pre-training mode")
+        train_data = load_superres_data_old(
+            args.data_dir,
+            args.batch_size,
+            large_size=args.large_size,
+            small_size=args.small_size,
+        )
+        logger.log(f"Worker {dist.get_rank()}: Training data loaded")
+        if dist.get_rank() == 0:
+            valid_kwargs = load_data_for_validation_old(
+                args.val_data_dir,
+                args.tb_valid_im_num,
+                args.large_size,
+                args.small_size,
+            )
+        else:
+            valid_kwargs = None
+
     if dist.get_rank() == 0:
-        logger.save_parameters(args=args, dir=full_log_dir)
-        logger.log("training...")
-    
-    TrainLoop(
+        # Store the hyperparameters setting
+        logger.save_parameters(args=args, dir=log_sub_dir)
+
+    logger.log(f"Worker {dist.get_rank()}: Training started")
+
+    training_loop = TrainLoop(
         tb=tb,
         model=model,
         diffusion=diffusion,
@@ -85,30 +157,79 @@ def main():
         total_steps=args.total_steps,
         valid_kwargs=valid_kwargs,
         tb_valid_im_num=args.tb_valid_im_num,
-    ).run_loop()
+    )
+    logger.log(f"Worker {dist.get_rank()}: Training loop constructed")
+    training_loop.run_loop()
 
-    if dist.get_rank() == 0:
+    if dist.get_rank() == 0 and tb:
         tb.close()
 
-def load_data_for_validation(
-    valid_paths,
-    tb_valid_im_num,
-    patch_size,
-        ):
-    data = next(load_superres_data(
-        paths = valid_paths,
-        batch_size = tb_valid_im_num,
-        patch_size = patch_size
-            ))
+
+def load_superres_data_old(
+    data_dir, batch_size, large_size, small_size, deterministic=False
+):
+    data = load_data(
+        data_dir=data_dir,
+        batch_size=batch_size,
+        image_size=large_size,
+        class_cond=False,
+        deterministic=deterministic,
+        random_crop=True,
+    )
+    for large_batch, model_kwargs in data:
+        low_res = F.interpolate(large_batch, small_size, mode="area")
+
+        # Upsampling
+        model_kwargs["low_res"] = F.interpolate(
+            low_res, (large_size, large_size), mode="bilinear"
+        )
+
+        yield large_batch, model_kwargs
+
+
+def load_data_for_validation_old(data_dir, tb_valid_im_num, large_size, small_size):
+    # Utilize load_superres_data function to preprocess the image data
+    dataloader = load_superres_data_old(
+        data_dir,
+        batch_size=tb_valid_im_num,
+        large_size=large_size,
+        small_size=small_size,
+        deterministic=True,
+    )
+
+    data = next(dataloader)
+
     batch, model_kwargs = data
     model_kwargs["high_res"] = batch
 
     return model_kwargs
 
+
+def load_data_for_validation(
+    valid_paths, tb_valid_im_num, patch_size,
+):
+    # Utilize load_superres_data function to preprocess the image data
+    dataloader = load_superres_data(
+        paths=valid_paths,
+        batch_size=tb_valid_im_num,
+        patch_size=patch_size,
+        deterministic=True,
+        random_crop=False,
+    )
+
+    data = next(dataloader)
+
+    batch, model_kwargs = data
+    model_kwargs["high_res"] = batch
+
+    return model_kwargs
+
+
 def create_argparser():
     defaults = dict(
         data_dir="",
         log_dir="",
+        val_data_dir="",
         schedule_sampler="uniform",
         patch_size=128,
         lr=1e-4,
@@ -124,8 +245,10 @@ def create_argparser():
         fp16_scale_growth=1e-3,
         tb_valid_im_num=10,
         total_steps=1050e3,
-        valid_samples=['Slide002-2.tif', 'Slide003-2.tif', 'Slide005-1.tif', 'Slide008-1.tif', 'Slide008-2.tif', 'Slide010-1.tif', 'Slide011-1.tif', 'Slide011-5.tif', 'Slide011-6.tif', 'Slide019-3.tif', 'Slide022-1.tif', 'Slide022-3.tif', 'Slide023-3.tif', 'Slide025-1.tif', 'Slide028-1.tif', 'Slide029-3.tif', 'Slide030-1.tif', 'Slide032-3.tif', 'Slide036-1.tif', 'Slide036-2.tif', 'Slide037-2.tif', 'Slide039-1.tif', 'Slide042-1.tif', 'Slide044-3.tif', 'Slide046-3.tif', 'Slide047-2.tif', 'Slide053-1.tif'],
-        test_samples=['Slide008-3.tif', 'Slide011-4.tif', 'Slide013-2.tif', 'Slide014-2.tif', 'Slide019-1.tif', 'Slide019-2.tif', 'Slide022-4.tif', 'Slide031-1.tif', 'Slide034-3.tif', 'Slide035-1.tif', 'Slide044-2.tif', 'Slide045-1.tif', 'Slide045-2.tif', 'Slide045-3.tif', 'Slide052-2.tif'], 
+        model_path="",
+        pre_train=False,
+        large_size=256,
+        small_size=64,
     )
     defaults.update(sr_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

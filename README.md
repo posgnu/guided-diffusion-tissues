@@ -4,6 +4,9 @@ This is the codebase for the project on improving the resolution of tissue image
 
 We aim to try various CNN models, including recently reliazed guided diffusion models. We heavily rely on the codebase for [Diffusion Models Beat GANS on Image Synthesis](http://arxiv.org/abs/2105.05233) [openai/guided-diffusion](https://github.com/openai/guided-diffusion).
 
+## Requirements
+* Python 3.9
+
 ## Prerequisites
 ```shellscript
 pip install -e .
@@ -43,8 +46,9 @@ For trying a model, I suggest to change the following arguments:
 
 After each `--save_interval`, the validation set is visualized to tensorboard. `--tb_valid_im_num` defines number of validation patches displayed in tensorboard. I wanted to add also assessment of the validation losses, but for some reason I have a CUDA error (will deal with this later).
 
+Training from the scratch
 ```sh 
-mpiexec -n 2 python3 scripts/super_res_train.py \
+NCCL_P2P_DISABLE=1 mpiexec -n 8 python3 scripts/super_res_train.py \
 --patch_size 128 \
 --data_dir /baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/high_res \
 --log_dir log \
@@ -55,10 +59,66 @@ mpiexec -n 2 python3 scripts/super_res_train.py \
 --num_head_channels 64 \
 --attention_resolutions "32,16,8" \
 --lr 1e-4 \
---log_interval 10000 --save_interval 10000 \
---batch_size 8 --tb_valid_im_num 8
+--log_interval 100 --save_interval 10000 \
+--batch_size 16 --tb_valid_im_num 8
 ```
 
+Pre-training
+```sh
+NCCL_P2P_DISABLE=1 mpiexec -n 8 python3 scripts/super_res_train.py \
+--patch_size 256 \
+--data_dir /home/kgw/ILSVRC/Data/CLS-LOC/test \
+--val_data_dir /home/kgw/ILSVRC/Data/CLS-LOC/val \
+--log_dir pre-train-log-256 \
+--diffusion_steps 1000 \
+--noise_schedule "linear" \
+--num_channels 192 \
+--num_res_blocks 2 \
+--num_head_channels 64 \
+--attention_resolutions "32,16,8" \
+--lr 1e-4 \
+--log_interval 100 --save_interval 10000 \
+--batch_size 2 --tb_valid_im_num 8 \
+--pre_train True
+```
+
+Resume training
+```sh
+NCCL_P2P_DISABLE=1 mpiexec -n 8 python3 scripts/super_res_train.py \
+--resume_checkpoint log-fine-tune/model580000.pt \
+--patch_size 128 \
+--data_dir /baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/high_res \
+--log_dir log-fine-tune \
+--diffusion_steps 1000 \
+--noise_schedule "linear" \
+--num_channels 192 \
+--num_res_blocks 2 \
+--num_head_channels 64 \
+--attention_resolutions "32,16,8" \
+--lr 1e-4 \
+--log_interval 100 --save_interval 10000 \
+--batch_size 14 --tb_valid_im_num 8
+```
+
+Inference
+```sh
+NCCL_P2P_DISABLE=1 mpiexec -n 8 python3 scripts/super_res_sample.py \
+--model_path log-fine-tune/model600000.pt \
+--diffusion_steps 1000 \
+--noise_schedule "linear" \
+--num_channels 192 \
+--num_res_blocks 2 \
+--num_head_channels 64 \
+--attention_resolutions "32,16,8" \
+--base_samples /baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/low_res/Slide022-1.tif \
+--log_dir test-result
+
+```
+
+Sample
+```
+
+```
 > Things to consider:
 >
 > Batch size is small because CUDA runs out of memory. Needs to be trained on larger nodes.
