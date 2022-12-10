@@ -1,6 +1,6 @@
 # guided-diffusion-tissues
 
-This is the codebase for the project on improving the resolution of tissue images. 
+This is the codebase for the project on improving the resolution of tissue images. The code for ESRGAN is in `Real-ESRGAN.zip`.
 
 We aim to try various CNN models, including recently reliazed guided diffusion models. We heavily rely on the codebase for [Diffusion Models Beat GANS on Image Synthesis](http://arxiv.org/abs/2105.05233) [openai/guided-diffusion](https://github.com/openai/guided-diffusion).
 
