@@ -16,7 +16,7 @@ from torch.utils.tensorboard.writer import SummaryWriter
 import datetime
 from PIL import Image
 import torchvision.transforms as T
-
+import random
 
 
 from guided_diffusion import dist_util, logger
@@ -80,76 +80,33 @@ def main():
             "/baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/low_res/Slide019-3.tif",
             "/baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/low_res/Slide022-1.tif",
             "/baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/low_res/Slide022-3.tif",
-            "/baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/low_res/Slide054-1.tif"
-        ]
+    ]
+
     # Parameters
     args.patch_size = 256
     args.batch_size = 12
-    degree_of_overlap = 1
-    idx_list = [20]
-    for idx, base_file in enumerate(val_files):
-        if idx not in idx_list:
-            continue
-        logger.log("loading data...")
 
-        result_image = []
-        
-        for _ in range(degree_of_overlap):
-            patch_arr, width, height = decompose_biomedical_image(
-                base_file, args.patch_size
-            )
-            data = load_data_for_worker(patch_arr, args.batch_size)
-            num_samples = len(patch_arr)
+    patch_arr, patch_target_arr, width, height = decompose_biomedical_image(
+        val_files, args.patch_size
+    )
+    data = load_data_for_worker(patch_arr, args.batch_size)
+    num_samples = len(patch_arr)
 
-            all_images = sample_patches(args, model, diffusion, data, num_samples)
-            if dist.get_rank() == 0:
-                result_image.append(compose_patches(all_images, tb, width, height, args.patch_size, circle=True).to(torch.int))
-        
-        # Second layer
-        for _ in range(degree_of_overlap):
-            patch_arr, width, height = decompose_biomedical_image_misaligned(
-                base_file, args.patch_size
-            )
-            data = load_data_for_worker(patch_arr, args.batch_size)
-            num_samples = len(patch_arr)
+    all_images = sample_patches(args, model, diffusion, data, num_samples)
+    # only idx % 8 == 0 are matched 
+    # Averaging over images
+    if dist.get_rank() == 0:
+        for idx, (sr_patch, lr_patch, hr_patch) in enumerate(zip(all_images, patch_arr, patch_target_arr)):
+            if idx % 8 != 0:
+                continue
+            tb.add_images(f"super resolution patches", sr_patch.to(torch.uint8).unsqueeze(0), idx)
+            tb.add_images(f"high resolution patches", torch.from_numpy(hr_patch).permute(2, 0, 1).to(torch.uint8).unsqueeze(0), idx)
+            tb.add_images(f"low resolution patches", torch.from_numpy(lr_patch).permute(2, 0, 1).to(torch.uint8).unsqueeze(0), idx)
+            import time
+            time.sleep(5)
 
-            all_images = sample_patches(args, model, diffusion, data, num_samples)
-            if dist.get_rank() == 0:
-                result_image.append(compose_patches_misaligned(all_images, tb, width, height, args.patch_size, circle=True).to(torch.int))
-        
-        """        
-        # Third layer
-        args.patch_size = 128
-        args.batch_size = 45
-        patch_arr, width, height = decompose_biomedical_image_misaligned(
-            base_file, args.patch_size
-        )
-        data = load_data_for_worker(patch_arr, args.batch_size)
-        num_samples = len(patch_arr)
-
-        all_images = sample_patches(args, model, diffusion, data, num_samples)
-        if dist.get_rank() == 0:
-            result_image.append(compose_patches_misaligned(all_images, tb, width, height, args.patch_size).to(torch.int))
-        """
-
-        # Averaging over images
-        if dist.get_rank() == 0:
-            stacked_images = torch.stack(result_image, dim=0)
-            mask = stacked_images != -1
-            averaged_image = (stacked_images * mask).sum(dim=0) / mask.sum(dim=0)
-
-            transform = T.GaussianBlur(kernel_size=(7, 13), sigma=(2))
-            blurred_img = transform(averaged_image)
-
-            tb.add_images(f"({len(result_image)} layers) for blurred image", blurred_img.to(torch.uint8).unsqueeze(0), idx)
-            tb.add_images(f"({len(result_image)} layers) for original image", averaged_image.to(torch.uint8).unsqueeze(0), idx)
-
-
-
-        dist.barrier()
-        import time
-        time.sleep(30)
-        logger.log("sampling complete")
+    dist.barrier()    
+    logger.log("sampling complete")
 
 def sample_patches(args, model, diffusion, data, num_samples):
     logger.log("creating samples...")
@@ -180,7 +137,6 @@ def sample_patches(args, model, diffusion, data, num_samples):
         
         sample = sample.contiguous()
         
-
         all_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
         dist.all_gather(all_samples, sample)  # gather not supported with NCCL
 
@@ -197,56 +153,59 @@ def sample_patches(args, model, diffusion, data, num_samples):
     all_images = all_images[:num_samples]
     return all_images
 
-def decompose_biomedical_image_misaligned(image_path, patch_size=256):
-    assert patch_size % 2 == 0
-    pad_arr_image = pad_image_as_multiples(image_path, patch_size)
-    pad_size = patch_size // 2
-    pad_pad_arr_image = np.pad(pad_arr_image, ((pad_size, pad_size), (pad_size, pad_size), (0,0)), "constant", constant_values=PAD_VALUE)
+def decompose_biomedical_image(image_paths, patch_size=256):
+    arr_image_list, arr_target_list = pad_image_as_multiples(image_paths)
+    height, width, _ = arr_image_list[0].shape
 
-    width, height, _ = pad_pad_arr_image.shape
+    patch_arr, patch_target_arr = decompose_into_patches(patch_size, arr_image_list, arr_target_list, width, height)
+    return patch_arr, patch_target_arr, width, height
 
-    assert width % patch_size == 0 and height % patch_size == 0
-
-    patch_arr = decompose_into_patches(patch_size, pad_pad_arr_image, width, height)
-    return patch_arr, width, height
-
-def decompose_biomedical_image(image_path, patch_size=256):
-    pad_arr_image = pad_image_as_multiples(image_path, patch_size)
-    width, height, _ = pad_arr_image.shape
-
-    patch_arr = decompose_into_patches(patch_size, pad_arr_image, width, height)
-    return patch_arr, width, height
-
-def decompose_into_patches(patch_size, pad_arr_image, width, height):
+def decompose_into_patches(patch_size, arr_image_list, arr_target_list, width, height, num_patches=9):
     patch_arr = []
-    for row in range(0, width, patch_size):
-        for col in range(0, height, patch_size):
-            patch_arr.append(
-                pad_arr_image[row : row + patch_size, col : col + patch_size, :]
-            )
+    target_path_arr = []
+    for arr_image, target_arr_image in zip(arr_image_list, arr_target_list):
+        num_patch_generated = 0
+        while True:
+            if num_patch_generated >= num_patches:
+                break
+
+            crop_y = random.randrange(height - patch_size + 1)
+            crop_x = random.randrange(width - patch_size + 1)
+            arr_crop = arr_image[crop_y : crop_y + patch_size, crop_x : crop_x + patch_size]
+            target_crop = target_arr_image[crop_y : crop_y + patch_size, crop_x : crop_x + patch_size]
+
+            if is_white(arr_crop) or is_black(arr_crop):
+                continue
+            
+            patch_arr.append(arr_crop)
+            target_path_arr.append(target_crop)
+
+            num_patch_generated += 1
+
     logger.log(f"{len(patch_arr)} patches are generated")
-    return patch_arr
+    return patch_arr, target_path_arr
 
-def pad_image_as_multiples(image_path, patch_size):
-    with bf.BlobFile(image_path, "rb") as f:
-        low_res_pil_image = Image.open(f)
-        low_res_pil_image.load()
-    low_res_pil_image = low_res_pil_image.convert("RGB")
+def pad_image_as_multiples(image_paths):
+    arr_image_list = []
+    arr_target_list = []
+    for image_path in image_paths:
+        target_image_path = image_path.replace("low_res", "high_res")
 
-    arr_image = np.array(low_res_pil_image)
-    width, height, _ = arr_image.shape
-    pad_width, pad_height = (
-        patch_size - (width % patch_size),
-        patch_size - (height % patch_size),
-    )
-    pad_arr_image = np.pad(
-        arr_image,
-        ((pad_width, 0), (pad_height, 0), (0, 0)),
-        "constant",
-        constant_values=PAD_VALUE,
-    )
-    
-    return pad_arr_image
+        with bf.BlobFile(image_path, "rb") as f:
+            low_res_pil_image = Image.open(f)
+            low_res_pil_image.load()
+        low_res_pil_image = low_res_pil_image.convert("RGB")
+        arr_image = np.array(low_res_pil_image)
+        arr_image_list.append(arr_image)
+
+        with bf.BlobFile(target_image_path, "rb") as f:
+            high_res_pil_image = Image.open(f)
+            high_res_pil_image.load()
+        high_res_pil_image = high_res_pil_image.convert("RGB")
+        target_arr_image = np.array(high_res_pil_image)
+        arr_target_list.append(target_arr_image)
+
+    return arr_image_list, arr_target_list
 
 
 def compose_patches(patch_arr, tb, width, height, patch_size=256, circle=False):

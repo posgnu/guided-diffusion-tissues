@@ -49,7 +49,8 @@ After each `--save_interval`, the validation set is visualized to tensorboard. `
 Training from the scratch
 ```sh 
 NCCL_P2P_DISABLE=1 mpiexec -n 8 python3 scripts/super_res_train.py \
---patch_size 128 \
+--model_path log/model240000.pt \
+--patch_size 256 \
 --data_dir /baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/high_res \
 --log_dir log \
 --diffusion_steps 1000 \
@@ -59,16 +60,16 @@ NCCL_P2P_DISABLE=1 mpiexec -n 8 python3 scripts/super_res_train.py \
 --num_head_channels 64 \
 --attention_resolutions "32,16,8" \
 --lr 1e-4 \
---log_interval 100 --save_interval 10000 \
---batch_size 16 --tb_valid_im_num 8
+--log_interval 1000 --save_interval 10000 \
+--batch_size 4 --tb_valid_im_num 8
 ```
 
 Pre-training
 ```sh
 NCCL_P2P_DISABLE=1 mpiexec -n 8 python3 scripts/super_res_train.py \
 --patch_size 256 \
---data_dir /home/kgw/ILSVRC/Data/CLS-LOC/test \
---val_data_dir /home/kgw/ILSVRC/Data/CLS-LOC/val \
+--data_dir /home/kgw/guided-diffusion-tissues/ILSVRC/Data/CLS-LOC/test \
+--val_data_dir /home/kgw/guided-diffusion-tissues/ILSVRC/Data/CLS-LOC/val \
 --log_dir pre-train-log-256 \
 --diffusion_steps 1000 \
 --noise_schedule "linear" \
@@ -85,8 +86,8 @@ NCCL_P2P_DISABLE=1 mpiexec -n 8 python3 scripts/super_res_train.py \
 Resume training
 ```sh
 NCCL_P2P_DISABLE=1 mpiexec -n 8 python3 scripts/super_res_train.py \
---resume_checkpoint log-fine-tune/model580000.pt \
---patch_size 128 \
+--resume_checkpoint log-fine-tune/model640000.pt \
+--patch_size 256 \
 --data_dir /baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/high_res \
 --log_dir log-fine-tune \
 --diffusion_steps 1000 \
@@ -103,7 +104,7 @@ NCCL_P2P_DISABLE=1 mpiexec -n 8 python3 scripts/super_res_train.py \
 Inference
 ```sh
 NCCL_P2P_DISABLE=1 mpiexec -n 8 python3 scripts/super_res_sample.py \
---model_path log-fine-tune/model600000.pt \
+--model_path log-fine-tune/model670000.pt \
 --diffusion_steps 1000 \
 --noise_schedule "linear" \
 --num_channels 192 \
@@ -111,13 +112,27 @@ NCCL_P2P_DISABLE=1 mpiexec -n 8 python3 scripts/super_res_sample.py \
 --num_head_channels 64 \
 --attention_resolutions "32,16,8" \
 --base_samples /baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/low_res/Slide022-1.tif \
---log_dir test-result
-
+--log_dir test-result-256
 ```
 
-Sample
+Sample patches
+```
+NCCL_P2P_DISABLE=1 mpiexec -n 8 python3 scripts/super_res_sample_patches.py \
+--patch_size 256 \
+--model_path log/model080000.pt \
+--diffusion_steps 1000 \
+--noise_schedule "linear" \
+--num_channels 192 \
+--num_res_blocks 2 \
+--num_head_channels 64 \
+--attention_resolutions "32,16,8" \
+--base_samples /baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/low_res/Slide022-1.tif \
+--log_dir test-result-256
 ```
 
+UNet training
+```
+python3 unet_train.py /baldig/bioprojects2/BrownLab/Ptychography/Registered_Images2/high_res --gpus 1 --epochs 10000
 ```
 > Things to consider:
 >

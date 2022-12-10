@@ -15,18 +15,7 @@ from baselines.unet_module import UNetDataModule, UNetTrainingModule
 DEFAULT_OPTIONS = {
     "epoch_length": 1024,
 
-    "valid_samples": ['Slide002-2.tif', 'Slide003-2.tif', 'Slide005-1.tif', 'Slide008-1.tif', 'Slide008-2.tif',
-                      'Slide010-1.tif', 'Slide011-1.tif', 'Slide011-5.tif', 'Slide011-6.tif', 'Slide019-3.tif',
-                      'Slide022-1.tif', 'Slide022-3.tif', 'Slide023-3.tif', 'Slide025-1.tif', 'Slide028-1.tif',
-                      'Slide029-3.tif', 'Slide030-1.tif', 'Slide032-3.tif', 'Slide036-1.tif', 'Slide036-2.tif',
-                      'Slide037-2.tif', 'Slide039-1.tif', 'Slide042-1.tif', 'Slide044-3.tif', 'Slide046-3.tif',
-                      'Slide047-2.tif', 'Slide053-1.tif'],
-
-    "test_samples": ['Slide008-3.tif', 'Slide011-4.tif', 'Slide013-2.tif', 'Slide014-2.tif',
-                     'Slide019-1.tif', 'Slide019-2.tif', 'Slide022-4.tif', 'Slide031-1.tif',
-                     'Slide034-3.tif', 'Slide035-1.tif', 'Slide044-2.tif', 'Slide045-1.tif',
-                     'Slide045-2.tif', 'Slide045-3.tif', 'Slide052-2.tif'],
-
+    "valid_samples": ["Slide011-6.tif","Slide019-3.tif","Slide022-1.tif","Slide022-3.tif","Slide023-3.tif","Slide025-1.tif","Slide028-1.tif","Slide029-3.tif"],
 }
 
 
@@ -40,7 +29,7 @@ def parse_arguments():
     parser.add_argument("--learning_rate", type=float, default=0.001)
 
     parser.add_argument("--gpus", type=int, default=0)
-    parser.add_argument("--logdir", type=str, default="baseline_logs")
+    parser.add_argument("--logdir", type=str, default="log")
     parser.add_argument("--name", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=1_000)
 
@@ -75,9 +64,10 @@ def main(
     trainer = pl.Trainer(
         logger=logger,
         gpus=gpus,
-        weights_summary='full',
+        # weights_summary='full',
         max_epochs=epochs,
-        precision=16
+        precision=16,
+        val_check_interval=0.25
     )
 
     trainer.fit(network_module, data_module)

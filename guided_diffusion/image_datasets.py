@@ -19,6 +19,7 @@ from tqdm import tqdm
 import hashlib
 
 
+
 def load_preloaded_superres_downsampled_data(
     *,
     paths,
@@ -257,10 +258,9 @@ class PreloadedImageDataset(Dataset):
                     :, patch_lower[0] : patch_upper[0], patch_lower[1] : patch_upper[1]
                 ]
 
-                valid_patch = not (
-                    (patch_high_res_image == 0).all()
-                    | (patch_high_res_image == 1).all()
-                )
+                if not is_white(np.array(patch_high_res_image)) and not is_black(np.array(patch_high_res_image)):
+                    valid_patch = True
+                
 
             high_res_image = patch_high_res_image
             low_res_image = patch_low_res_image
@@ -476,7 +476,7 @@ class SuperresImageDataset(Dataset):
 
 def is_white(arr):
     white_fraction = np.mean(arr) / 255
-    if white_fraction >= 0.999:
+    if white_fraction >= 0.99:
         return True
     else:
         return False
@@ -484,7 +484,7 @@ def is_white(arr):
 
 def is_black(arr):
     black_fraction = np.mean(arr) / 255
-    if black_fraction <= 0.001:
+    if black_fraction <= 0.01:
         return True
     else:
         return False

@@ -5,7 +5,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from torch.utils.data import Dataset, DataLoader
-from guided_diffusion.image_datasets import _list_image_files_train_valid_test
+from guided_diffusion.image_datasets import image_files_train_valid_test_split
 from glob import glob
 import numpy as np
 
@@ -18,6 +18,7 @@ import pytorch_lightning as pl
 
 from baselines.unet import UNet
 from guided_diffusion.image_datasets import PreloadedImageDataset
+from torchmetrics.functional import structural_similarity_index_measure as ssim
 
 
 class UNetTrainingModule(pl.LightningModule):
@@ -60,7 +61,12 @@ class UNetTrainingModule(pl.LightningModule):
         for reconstructed_feature, high_res_feature in zip(reconstructed_features, high_res_features):
             mse = mse + ((reconstructed_feature - high_res_feature) ** 2).mean()
 
+        ssim_score = ssim(reconstructed_image.to(torch.float), high_res_image)
+
         self.log("train_loss", mse)
+        self.logger.experiment.add_scalar("MSE", mse, self.global_step)
+        self.logger.experiment.add_scalar("SSIM", ssim_score, self.global_step)
+
         return mse
 
     def validation_step(self, batch, batch_idx):
@@ -76,7 +82,7 @@ class UNetTrainingModule(pl.LightningModule):
         self.log("val_loss", mse)
 
         if batch_idx == 0:
-            images = torch.cat((high_res_image, low_res_image, reconstructed_image), dim=3)
+            images = torch.cat((low_res_image, high_res_image, reconstructed_image), dim=3)
             images = images[:16]
             images = images.permute(1, 0, 2, 3)
             images = images.reshape(3, -1, images.shape[-1])
@@ -97,11 +103,11 @@ class UNetDataModule(pl.LightningDataModule):
         self.batch_size = options["batch_size"]
 
     def setup(self, stage=None):
-        train_paths, valid_paths, test_paths = _list_image_files_train_valid_test(
+        train_paths, valid_paths = image_files_train_valid_test_split(
             self.options["data_dir"],
             self.options["valid_samples"],
-            self.options["test_samples"]
         )
+        test_paths = valid_paths
 
         # noinspection PyAttributeOutsideInit
         self.training_dataset = PreloadedImageDataset(

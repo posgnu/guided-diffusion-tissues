@@ -5,3 +5,6 @@ test-result
 log-fine-tune
 pre-train-log-128
 log/
+ILSVRC
+pre-train-log-256/
+test-result-256/
